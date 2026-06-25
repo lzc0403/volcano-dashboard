@@ -90,7 +90,7 @@
 <script src="app.js"></script>
 <script>
   // 加载数据并渲染
-  fetch('/data.json')
+  fetch('data.json')
     .then(r => r.json())
     .then(data => { window.DASHBOARD_DATA = data; renderDashboard(data); })
     .catch(err => { console.error('加载数据失败:', err); document.getElementById('alerts-container').innerHTML = '<div class="alert-card err">数据加载失败，请刷新页面或检查 data.json</div>'; });
