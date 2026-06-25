@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>火山业务数据实时分析报告</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="header">
+  <div class="mesh-wrap"><div class="mesh"></div></div>
+  <div class="header-inner">
+    <div class="header-top">
+      <h1>火山业务数据实时分析报告</h1>
+      <span class="refresh-badge" id="lastUpdate">数据加载中...</span>
+    </div>
+    <p class="subtitle">多账户消耗监控与智能分析</p>
+    <div class="meta-bar">
+      <span class="meta-tag" id="dataRange">-</span>
+      <span class="meta-tag">腾讯文档在线表格</span>
+      <span class="meta-tag" id="genTime">-</span>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-label">累计总消耗</div><div class="kpi-value" id="kpi-total">-</div><div class="kpi-sub">全账户全项目</div><div class="kpi-chip up" id="kpi-total-trend">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">日均消耗</div><div class="kpi-value" id="kpi-daily-avg">-</div><div class="kpi-sub">主账户有效天数</div><div class="kpi-chip up" id="kpi-daily-trend">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">峰值消耗</div><div class="kpi-value" id="kpi-peak">-</div><div class="kpi-sub" id="kpi-peak-date">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">活跃项目数</div><div class="kpi-value" id="kpi-projects">-</div><div class="kpi-sub">跨账户平台</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><div class="section-title">异常预警与洞察</div></div>
+    <div id="alerts-container"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><div class="section-title">趋势分析</div></div>
+    <div class="grid-2-1">
+      <div class="card"><div class="card-head"><div class="card-title" id="trendTitle">每日总消耗</div><span class="card-meta">MA(7)</span></div><div class="chart-wrap tall"><canvas id="chartMainTrend"></canvas></div></div>
+      <div class="card"><div class="card-head"><div class="card-title">项目消耗占比</div></div><div class="chart-wrap tall"><canvas id="chartPie"></canvas></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><div class="section-title">项目深度分析</div></div>
+    <div class="tab-bar">
+      <div class="tab-btn active" data-tab="tab-detail">项目明细表</div>
+      <div class="tab-btn" data-tab="tab-compare">Top 项目对比</div>
+    </div>
+    <div id="tab-detail" class="tab-pane active">
+      <div class="card card-flush"><div style="overflow-x:auto"><table class="data-table" id="projectTable"><thead><tr>
+        <th class="pl4">项目名称</th><th>账户</th><th class="num">累计消耗</th><th class="num">日均消耗</th><th class="num">峰值</th><th class="num">谷值</th><th class="num">波动系数</th><th>消耗等级</th><th class="pr4">趋势</th>
+      </tr></thead><tbody id="projectTableBody"></tbody></table></div></div>
+    </div>
+    <div id="tab-compare" class="tab-pane">
+      <div class="card"><div class="card-head"><div class="card-title">Top 项目日消耗对比</div></div><div class="chart-wrap tall"><canvas id="chartCompare"></canvas></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><div class="section-title">多账户平台对比</div></div>
+    <div class="grid-3" id="accountGrid"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><div class="section-title">周期性分析</div></div>
+    <div class="grid-2">
+      <div class="card"><div class="card-head"><div class="card-title">星期维度消耗分布</div></div><div class="chart-wrap medium"><canvas id="chartWeekday"></canvas></div></div>
+      <div class="card"><div class="card-head"><div class="card-title">上/中/下旬消耗对比</div></div><div class="chart-wrap medium"><canvas id="chartPeriod"></canvas></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><div class="section-title">统计分析摘要</div></div>
+    <div class="grid-2">
+      <div class="card"><div class="card-head"><div class="card-title">描述性统计</div></div><div id="descStats"></div></div>
+      <div class="card"><div class="card-head"><div class="card-title">趋势分析</div></div><div id="trendAnalysis"></div></div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  // 加载数据并渲染
+  fetch('/data.json')
+    .then(r => r.json())
+    .then(data => { window.DASHBOARD_DATA = data; renderDashboard(data); })
+    .catch(err => { console.error('加载数据失败:', err); document.getElementById('alerts-container').innerHTML = '<div class="alert-card err">数据加载失败，请刷新页面或检查 data.json</div>'; });
+
+  // 每 5 分钟检查数据更新
+  setInterval(() => {
+    fetch('/data.json?_=' + Date.now())
+      .then(r => r.json())
+      .then(data => {
+        if (window.DASHBOARD_DATA && data.timestamp !== window.DASHBOARD_DATA.timestamp) {
+          window.DASHBOARD_DATA = data;
+          renderDashboard(data);
+        }
+      })
+      .catch(() => {});
+  }, 300000);
+</script>
+</body>
+</html>
