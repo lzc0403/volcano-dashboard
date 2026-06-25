@@ -4,14 +4,14 @@ on:
   schedule:
     # 每天 UTC 1:00-13:00 (北京时间 9:00-21:00) 每小时执行
     - cron: '0 1-13 * * *'
-  workflow_dispatch: {}  # 支持手动触发
+  workflow_dispatch: {}
 
 permissions:
   contents: write
   pages: write
 
 jobs:
-  refresh:
+  refresh-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +25,7 @@ jobs:
           TENCENT_DOCS_TOKEN: ${{ secrets.TENCENT_DOCS_TOKEN }}
         run: node refresh-data.js
 
-      - name: Commit and push if data changed
+      - name: Commit and push data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -36,12 +36,6 @@ jobs:
             git commit -m "data: refresh $(date -u '+%Y-%m-%d %H:%M')"
             git push
           fi
-
-  deploy:
-    needs: refresh
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
