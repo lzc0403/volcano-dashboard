@@ -97,7 +97,7 @@
 
   // 每 5 分钟检查数据更新
   setInterval(() => {
-    fetch('/data.json?_=' + Date.now())
+    fetch('data.json?_=' + Date.now())
       .then(r => r.json())
       .then(data => {
         if (window.DASHBOARD_DATA && data.timestamp !== window.DASHBOARD_DATA.timestamp) {
