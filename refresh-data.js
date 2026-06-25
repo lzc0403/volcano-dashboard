@@ -7,7 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const FILE_ID = 'DYmh3d2pnWmZLbmJL';
+const FILE_ID = 'DSVdETnBOaUp3ekRT';
 const DATA_FILE = path.join(__dirname, 'data.json');
 const API_BASE = 'https://docs.qq.com/openapi/mcp';
 const TOKEN = process.env.TENCENT_DOCS_TOKEN || '';
@@ -71,7 +71,7 @@ function cellsToGrid(cells) {
  */
 function excelDateToShort(serial) {
   if (!serial || typeof serial !== 'number' || serial < 40000) return null;
-  const base = new Date(1899, 11, 30); // Dec 30, 1899
+  const base = new Date(1899, 11, 31); // Dec 31, 1899 (Excel epoch adjusted for Lotus bug)
   const d = new Date(base.getTime() + serial * 86400000);
   return (d.getMonth() + 1) + '/' + d.getDate();
 }
