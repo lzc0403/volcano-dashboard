@@ -14,19 +14,45 @@ const DATA_FILE = path.join(__dirname, 'data.json');
 const API_BASE = 'https://docs.qq.com/openapi/mcp';
 const TOKEN = process.env.TENCENT_DOCS_TOKEN || '';
 
-async function callApi(tool, args) {
-  // GitHub Actions: 直接调用 API
-  if (TOKEN) {
-    const resp = await fetch(API_BASE, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': TOKEN
-      },
-      body: JSON.stringify({ tool, arguments: args })
-    });
-    const json = await resp.json();
+async function mcpCall(method, params) {
+  const resp = await fetch(API_BASE, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': TOKEN
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: Date.now(),
+      method: method,
+      params: params || {}
+    })
+  });
+  const text = await resp.text();
+  try {
+    const json = JSON.parse(text);
     return json;
+  } catch (e) {
+    console.error('API response parse error:', text.substring(0, 300));
+    return null;
+  }
+}
+
+async function callApi(tool, args) {
+  // GitHub Actions: 直接调用 MCP API (JSON-RPC 2.0)
+  if (TOKEN) {
+    const result = await mcpCall('tools/call', {
+      name: tool,
+      arguments: args
+    });
+    if (result && result.result && result.result.content && result.result.content[0]) {
+      try {
+        return JSON.parse(result.result.content[0].text);
+      } catch (e) {
+        return result.result.content[0].text;
+      }
+    }
+    return result ? result.result : null;
   }
 
   // 本地: 使用 mcporter
@@ -50,6 +76,21 @@ function parseCsv(csvData) {
 async function main() {
   console.log(`[${new Date().toISOString()}] 开始拉取腾讯文档数据...`);
   console.log(`  模式: ${TOKEN ? 'API 直连' : 'mcporter CLI'}`);
+
+  // MCP 初始化握手
+  if (TOKEN) {
+    console.log('  初始化 MCP 连接...');
+    const initResult = await mcpCall('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'volcano-dashboard', version: '1.0.0' }
+    });
+    if (!initResult) {
+      console.error('MCP 初始化失败');
+      process.exit(1);
+    }
+    console.log('  MCP 连接成功');
+  }
 
   // 1. 获取子表信息
   const sheetsInfo = await callApi('sheet.get_sheet_info', { file_id: FILE_ID });
