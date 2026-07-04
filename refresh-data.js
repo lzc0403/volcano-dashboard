@@ -71,9 +71,12 @@ function cellsToGrid(cells) {
  */
 function excelDateToShort(serial) {
   if (!serial || typeof serial !== 'number' || serial < 40000) return null;
-  const base = new Date(1899, 11, 31); // Dec 31, 1899 (Excel epoch adjusted for Lotus bug)
-  const d = new Date(base.getTime() + serial * 86400000);
-  return (d.getMonth() + 1) + '/' + d.getDate();
+  // Use UTC consistently to avoid timezone offset between local (UTC+8) and GitHub Actions (UTC)
+  // Excel epoch: Dec 30, 1899 (serial 1 = Dec 31, 1899 = Excel's "Jan 1, 1900" with Lotus bug)
+  const base = Date.UTC(1899, 11, 30);
+  const ms = base + serial * 86400000;
+  const d = new Date(ms);
+  return (d.getUTCMonth() + 1) + '/' + d.getUTCDate();
 }
 
 function gridToArrays(grid, startRow, endRow, startCol, endCol) {
