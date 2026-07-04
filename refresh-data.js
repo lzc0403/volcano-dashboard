@@ -7,7 +7,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const FILE_ID = 'DSVdETnBOaUp3ekRT';
+const FILE_ID_JULY = 'DSVdETnBOaUp3ekRT';   // 原文档 — 7月数据
+const FILE_ID_JUNE = 'DYmh3d2pnWmZLbmJL';    // 副本文档 — 6月数据（历史归档）
 const DATA_FILE = path.join(__dirname, 'data.json');
 const API_BASE = 'https://docs.qq.com/openapi/mcp';
 const TOKEN = process.env.TENCENT_DOCS_TOKEN || '';
@@ -91,6 +92,75 @@ function gridToArrays(grid, startRow, endRow, startCol, endCol) {
   return rows;
 }
 
+/**
+ * 从指定文档拉取一个 sheet 的数据，返回 { dates, projects }
+ */
+async function fetchSheet(fileId, sheet) {
+  const maxRow = Math.min(sheet.row_count - 1, 60);
+  const maxCol = (sheet.col_count || 26) - 1;
+  console.log(`  拉取: ${sheet.sheet_name} (0-${maxRow}行, 0-${maxCol}列) from ${fileId.substring(0,8)}...`);
+
+  const data = await callApi('sheet.get_cell_data', {
+    file_id: fileId, sheet_id: sheet.sheet_id,
+    start_row: 0, end_row: maxRow, start_col: 0, end_col: maxCol,
+    return_csv: false
+  });
+
+  if (!data) { console.warn(`  ${sheet.sheet_name} 拉取失败`); return null; }
+
+  let rows;
+  if (data.cells && Array.isArray(data.cells) && data.cells.length > 0) {
+    const grid = cellsToGrid(data.cells);
+    rows = gridToArrays(grid, 0, maxRow, 0, maxCol);
+  } else if (data.csv_data) {
+    rows = parseCsvQuoted(data.csv_data);
+  } else {
+    console.warn(`  ${sheet.sheet_name} 无数据`);
+    return null;
+  }
+
+  if (rows.length < 3) { console.warn(`  ${sheet.sheet_name} 行数不足`); return null; }
+
+  // 第0行: 日期标题
+  const headerRow = rows[0];
+  const dates = [];
+  for (let j = 1; j < headerRow.length; j++) {
+    const raw = headerRow[j];
+    if (raw === null || raw === undefined || raw === '') continue;
+    const shortDate = excelDateToShort(raw);
+    if (shortDate) { dates.push(shortDate); continue; }
+    const s = String(raw).trim();
+    if (s) dates.push(s);
+  }
+
+  const projects = {};
+  for (let i = 2; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || !row[0] || !String(row[0]).trim()) continue;
+    const name = String(row[0]).trim();
+    if (name === '合计' || name === '') continue;
+
+    const values = [];
+    for (let j = 0; j < dates.length; j++) {
+      const raw = row[j + 1];
+      if (raw === null || raw === undefined || raw === '') { values.push(null); continue; }
+      const v = parseFloat(String(raw).replace(/,/g, ''));
+      values.push(isNaN(v) ? null : v);
+    }
+    projects[name] = values;
+  }
+
+  // 计算合计
+  const totals = new Array(dates.length).fill(0);
+  for (const vals of Object.values(projects)) {
+    vals.forEach((v, i) => { if (v !== null) totals[i] += v; });
+  }
+  projects['合计'] = totals;
+
+  console.log(`  完成: ${sheet.sheet_name}, ${Object.keys(projects).length - 1} 项目, ${dates.length} 天`);
+  return { sheet_id: sheet.sheet_id, dates, projects };
+}
+
 async function main() {
   console.log(`[${new Date().toISOString()}] 开始拉取腾讯文档数据...`);
   console.log(`  模式: ${TOKEN ? 'API 直连' : 'mcporter CLI'}`);
@@ -105,85 +175,44 @@ async function main() {
     console.log('  MCP 就绪');
   }
 
-  // 1. 获取子表信息
-  const sheetsInfo = await callApi('sheet.get_sheet_info', { file_id: FILE_ID });
-  if (!sheetsInfo?.sheets) { console.error('获取子表失败'); process.exit(1); }
+  // === 7月数据（原文档）===
+  console.log('\n--- 拉取7月数据 (原文档) ---');
+  const julyInfo = await callApi('sheet.get_sheet_info', { file_id: FILE_ID_JULY });
+  if (!julyInfo?.sheets) { console.error('获取7月子表失败'); process.exit(1); }
 
-  const result = { timestamp: new Date().toISOString(), file_id: FILE_ID, accounts: {} };
-
-  // 2. 遍历子表
-  for (const sheet of sheetsInfo.sheets) {
-    const maxRow = Math.min(sheet.row_count - 1, 60);  // 限制行数，避免超大请求
-    const maxCol = (sheet.col_count || 26) - 1;
-    console.log(`  拉取: ${sheet.sheet_name} (0-${maxRow}行, 0-${maxCol}列)`);
-
-    // 尝试结构化数据
-    const data = await callApi('sheet.get_cell_data', {
-      file_id: FILE_ID, sheet_id: sheet.sheet_id,
-      start_row: 0, end_row: maxRow, start_col: 0, end_col: maxCol,
-      return_csv: false
-    });
-
-    if (!data) { console.warn(`  ${sheet.sheet_name} 拉取失败`); continue; }
-
-    let rows;
-    if (data.cells && Array.isArray(data.cells) && data.cells.length > 0) {
-      const grid = cellsToGrid(data.cells);
-      rows = gridToArrays(grid, 0, maxRow, 0, maxCol);
-    } else if (data.csv_data) {
-      rows = parseCsvQuoted(data.csv_data);
-    } else {
-      console.warn(`  ${sheet.sheet_name} 无数据`);
-      continue;
-    }
-
-    if (rows.length < 3) { console.warn(`  ${sheet.sheet_name} 行数不足`); continue; }
-
-    // 第0行: 日期标题 (可能是 Excel 序列号或中文日期)
-    const headerRow = rows[0];
-    const dates = [];
-    for (let j = 1; j < headerRow.length; j++) {
-      const raw = headerRow[j];
-      if (raw === null || raw === undefined || raw === '') continue;
-      // 尝试 Excel 日期序列号
-      const shortDate = excelDateToShort(raw);
-      if (shortDate) { dates.push(shortDate); continue; }
-      // 直接用字符串
-      const s = String(raw).trim();
-      if (s) dates.push(s);
-    }
-
-    const projects = {};
-    for (let i = 2; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row || !row[0] || !String(row[0]).trim()) continue;
-      const name = String(row[0]).trim();
-      if (name === '合计' || name === '') continue;
-
-      const values = [];
-      for (let j = 0; j < dates.length; j++) {
-        const raw = row[j + 1];
-        if (raw === null || raw === undefined || raw === '') { values.push(null); continue; }
-        // 移除千分位逗号后解析
-        const v = parseFloat(String(raw).replace(/,/g, ''));
-        values.push(isNaN(v) ? null : v);
-      }
-      projects[name] = values;
-    }
-
-    // 计算合计
-    const totals = new Array(dates.length).fill(0);
-    for (const vals of Object.values(projects)) {
-      vals.forEach((v, i) => { if (v !== null) totals[i] += v; });
-    }
-    projects['合计'] = totals;
-
-    result.accounts[sheet.sheet_name] = { sheet_id: sheet.sheet_id, dates, projects };
-    console.log(`  完成: ${sheet.sheet_name}, ${Object.keys(projects).length - 1} 项目, ${dates.length} 天`);
+  const julyAccounts = {};
+  for (const sheet of julyInfo.sheets) {
+    const result = await fetchSheet(FILE_ID_JULY, sheet);
+    if (result) julyAccounts[sheet.sheet_name] = result;
   }
 
+  // === 6月数据（副本文档）===
+  console.log('\n--- 拉取6月数据 (副本文档) ---');
+  const juneInfo = await callApi('sheet.get_sheet_info', { file_id: FILE_ID_JUNE });
+  const juneAccounts = {};
+  if (juneInfo?.sheets) {
+    for (const sheet of juneInfo.sheets) {
+      const result = await fetchSheet(FILE_ID_JUNE, sheet);
+      if (result) juneAccounts[sheet.sheet_name] = result;
+    }
+  } else {
+    console.warn('副本文档不可用，跳过6月数据');
+  }
+
+  const result = {
+    timestamp: new Date().toISOString(),
+    file_id_july: FILE_ID_JULY,
+    file_id_june: FILE_ID_JUNE,
+    months: {
+      july: { label: '2026年7月', accounts: julyAccounts },
+      june: { label: '2026年6月', accounts: juneAccounts }
+    },
+    // 兼容旧版前端：默认用7月数据作为 accounts
+    accounts: julyAccounts
+  };
+
   fs.writeFileSync(DATA_FILE, JSON.stringify(result, null, 2), 'utf8');
-  console.log(`[${new Date().toISOString()}] 数据已写入 data.json`);
+  console.log(`[${new Date().toISOString()}] 数据已写入 data.json (6月+7月)`);
 }
 
 /**
