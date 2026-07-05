@@ -1,286 +1,677 @@
-/**
- * app.js - Dashboard renderer
- * 由 index.html 加载，读取 data.json 数据并渲染所有图表
- */
+// ============ 火山业务数据看板 - Dashboard 风格 ============
 
-// ===================== UTILITIES =====================
-var sum = function(arr) { return arr.reduce(function(a, b) { return a + (b || 0); }, 0); };
-var mean = function(arr) { var v = arr.filter(function(x) { return x != null; }); return v.length ? sum(v) / v.length : 0; };
-var median = function(arr) { var v = arr.filter(function(x) { return x !== null; }).sort(function(a,b) { return a-b; }); var m = Math.floor(v.length/2); return v.length % 2 ? v[m] : (v[m-1]+v[m])/2; };
-var std = function(arr) { var v = arr.filter(function(x) { return x !== null; }); var m = mean(v); return Math.sqrt(v.reduce(function(s, x) { return s + Math.pow(x-m,2); }, 0) / v.length); };
-var arrMax = function(arr) { return Math.max.apply(null, arr.filter(function(x) { return x !== null; })); };
-var arrMin = function(arr) { return Math.min.apply(null, arr.filter(function(x) { return x !== null && x > 0; })); };
-var cv = function(arr) { var m = mean(arr); return m > 0 ? (std(arr)/m*100) : 0; };
-var fmt = function(n) { return n >= 10000 ? (n/10000).toFixed(2) + '万' : n >= 1000 ? n.toFixed(0).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',') : n.toFixed(2); };
-var fmtShort = function(n) { return n >= 10000 ? (n/10000).toFixed(1) + '万' : n >= 1000 ? (n/1000).toFixed(1) + 'K' : n.toFixed(0); };
+const PRIMARY = '#2BAE85';
+const PRIMARY_DEEP = '#1a8f6a';
+const GREEN_UP = '#10b981';
+const RED_DOWN = '#ef4444';
+const AMBER = '#f59e0b';
+const BLUE_INFO = '#3b82f6';
+const BG_MUTED = '#f8f9fa';
+const BORDER = '#e5e7eb';
+const TEXT_MUTED = '#666666';
+const TEXT_LABEL = '#999999';
 
-// boc-scraper palette
-var PRIMARY = '#533afd';
-var PRIMARY_DEEP = '#4434d4';
-var PRIMARY_SOFT = '#665efd';
-var PRIMARY_SUBDUED = '#b9b9f9';
-var GREEN = '#0ca678';
-var RED = '#e03131';
-var INK = '#0d253d';
-var INK_MUTE = '#64748d';
-var HAIRLINE = '#e3e8ee';
-var CANVAS_SOFT = '#f6f9fc';
+const CHART_COLORS = [PRIMARY, BLUE_INFO, AMBER, '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1'];
 
-var CHART_COLORS = [PRIMARY, '#273951', GREEN, '#e6a817', RED, PRIMARY_SOFT, '#94a3b8', '#0ca678', '#c2850a', '#64748d', PRIMARY_SUBDUED];
-var CHART_COLORS_ALPHA = CHART_COLORS.map(function(c) {
-  var r = parseInt(c.slice(1,3), 16), g = parseInt(c.slice(3,5), 16), b = parseInt(c.slice(5,7), 16);
-  return 'rgba(' + r + ',' + g + ',' + b + ',0.55)';
-});
+let chartTrend = null;
+let chartPie = null;
+let chartMonthCompare = null;
+let chartWeekly = null;
 
-// Chart.js defaults
-Chart.defaults.color = INK_MUTE;
-Chart.defaults.borderColor = HAIRLINE;
-Chart.defaults.font.family = "'Inter', 'Noto Sans SC', system-ui, sans-serif";
-Chart.defaults.font.size = 11;
-Chart.defaults.font.weight = 400;
-Chart.defaults.plugins.tooltip.backgroundColor = INK;
-Chart.defaults.plugins.tooltip.borderColor = 'rgba(0,0,0,0.1)';
-Chart.defaults.plugins.tooltip.borderWidth = 1;
-Chart.defaults.plugins.tooltip.cornerRadius = 6;
-Chart.defaults.plugins.tooltip.padding = 8;
-Chart.defaults.plugins.tooltip.titleFont = { size: 11, weight: 600 };
-Chart.defaults.plugins.tooltip.bodyFont = { size: 11 };
-
-// Store chart instances for cleanup
-var chartInstances = {};
-function destroyChart(id) { if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; } }
-
-// ===================== MAIN RENDER =====================
-function renderDashboard(data) {
-  // Find main account (first one, usually 深圳帐号)
-  var accountNames = Object.keys(data.accounts);
-  var mainAccountName = accountNames[0];
-  var mainAccount = data.accounts[mainAccountName];
-
-  if (!mainAccount || !mainAccount.dates || !mainAccount.projects) {
-    document.getElementById('alerts-container').innerHTML = '<div class="alert-card err">数据格式异常</div>';
-    return;
-  }
-
-  var dates = mainAccount.dates;
-  var projects = mainAccount.projects;
-  var totalKey = Object.keys(projects).find(function(k) { return k === '合计'; }) || '合计';
-  var szTotal = projects[totalKey] || [];
-
-  // Update header
-  document.getElementById('lastUpdate').textContent = '更新于 ' + new Date(data.timestamp).toLocaleString('zh-CN');
-  document.getElementById('dataRange').textContent = dates[0] + ' - ' + dates[dates.length - 1];
-  document.getElementById('genTime').textContent = new Date(data.timestamp).toLocaleDateString('zh-CN');
-  document.getElementById('trendTitle').textContent = mainAccountName + ' 每日总消耗';
-
-  // KPI
-  var totalConsumption = sum(szTotal);
-  var dailyAvg = mean(szTotal);
-  var peakVal = arrMax(szTotal);
-  var peakIdx = szTotal.indexOf(peakVal);
-  var totalProjects = 0;
-  accountNames.forEach(function(a) { totalProjects += Object.keys(data.accounts[a].projects).filter(function(k) { return k !== '合计'; }).length; });
-
-  document.getElementById('kpi-total').textContent = fmt(totalConsumption);
-  document.getElementById('kpi-daily-avg').textContent = fmt(dailyAvg);
-  document.getElementById('kpi-peak').textContent = fmt(peakVal);
-  document.getElementById('kpi-peak-date').textContent = '峰值 ' + dates[peakIdx];
-  document.getElementById('kpi-projects').textContent = totalProjects;
-
-  var firstWeek = szTotal.slice(0, 7), lastWeek = szTotal.slice(-7);
-  var trendPct = ((mean(lastWeek) - mean(firstWeek)) / mean(firstWeek) * 100).toFixed(1);
-  var trendEl = document.getElementById('kpi-total-trend');
-  var dailyTrendEl = document.getElementById('kpi-daily-trend');
-  if (trendPct > 0) {
-    trendEl.className = 'kpi-chip up'; trendEl.textContent = '+' + trendPct + '% vs 月初';
-    dailyTrendEl.className = 'kpi-chip up'; dailyTrendEl.textContent = '活跃增长期';
-  } else {
-    trendEl.className = 'kpi-chip down'; trendEl.textContent = trendPct + '% vs 月初';
-    dailyTrendEl.className = 'kpi-chip down'; dailyTrendEl.textContent = '近期回落';
-  }
-
-  // Alerts
-  var alerts = [];
-  var projectNames = Object.keys(projects).filter(function(k) { return k !== '合计'; });
-  projectNames.forEach(function(name) {
-    var vals = projects[name].filter(function(x) { return x !== null; });
-    if (vals.length < 3) return;
-    var m = mean(vals), s = std(vals);
-    var anomalies = vals.filter(function(x) { return Math.abs(x - m) > 2 * s; });
-    anomalies.forEach(function(v) {
-      var idx = projects[name].indexOf(v);
-      alerts.push({ type: 'err', text: '<strong>' + name + ' 异常值</strong> ' + dates[idx] + ' 消耗 ' + fmt(v) + '，为均值 ' + (v/m).toFixed(1) + ' 倍' });
-    });
-    if (vals.length >= 7) {
-      var ratio = mean(vals.slice(-7)) / mean(vals.slice(0, 7));
-      if (ratio < 0.5) alerts.push({ type: 'warn', text: '<strong>' + name + ' 骤降</strong> 近7天均值仅为前7天的 ' + (ratio*100).toFixed(0) + '%' });
-    }
-  });
-  if (alerts.length === 0) alerts.push({ type: 'info', text: '<strong>数据正常</strong> 未检测到显著异常' });
-  document.getElementById('alerts-container').innerHTML = alerts.slice(0, 5).map(function(a) {
-    return '<div class="alert-card ' + a.type + '">' + a.text + '</div>';
-  }).join('');
-
-  // Main trend chart
-  destroyChart('mainTrend');
-  chartInstances['mainTrend'] = new Chart(document.getElementById('chartMainTrend'), {
-    type: 'line',
-    data: {
-      labels: dates,
-      datasets: [
-        { label: '每日总消耗', data: szTotal, borderColor: PRIMARY, backgroundColor: function(ctx) { var g = ctx.chart.ctx.createLinearGradient(0,0,0,320); g.addColorStop(0,'rgba(83,58,253,0.10)'); g.addColorStop(1,'rgba(83,58,253,0)'); return g; }, fill: true, tension: 0.3, pointRadius: 2, pointHoverRadius: 5, pointBackgroundColor: PRIMARY, pointBorderColor: '#fff', pointBorderWidth: 2, borderWidth: 2 },
-        { label: '7日移动平均', data: szTotal.map(function(_, i) { return i >= 6 ? mean(szTotal.slice(i-6, i+1)) : null; }), borderColor: '#94a3b8', borderDash: [4,3], borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.3 }
-      ]
-    },
-    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'top', align: 'end', labels: { usePointStyle: true, pointStyle: 'line', padding: 14 } }, tooltip: { callbacks: { label: function(ctx) { return ctx.dataset.label + ': ' + fmt(ctx.raw); } } } }, scales: { x: { grid: { display: false }, ticks: { font: { size: 10 } } }, y: { ticks: { callback: function(v) { return fmtShort(v); } }, grid: { color: CANVAS_SOFT } } } }
-  });
-
-  // Pie chart
-  var projectSums = {};
-  projectNames.forEach(function(n) { projectSums[n] = sum(projects[n]); });
-  var sortedProjects = Object.entries(projectSums).sort(function(a,b) { return b[1]-a[1]; });
-
-  destroyChart('pie');
-  chartInstances['pie'] = new Chart(document.getElementById('chartPie'), {
-    type: 'doughnut',
-    data: { labels: sortedProjects.map(function(p) { return p[0]; }), datasets: [{ data: sortedProjects.map(function(p) { return p[1]; }), backgroundColor: CHART_COLORS.slice(0, sortedProjects.length), borderWidth: 2, borderColor: '#fff', hoverOffset: 6 }] },
-    options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right', labels: { usePointStyle: true, pointStyle: 'circle', font: { size: 10 }, padding: 8 } }, tooltip: { callbacks: { label: function(ctx) { var t = ctx.dataset.data.reduce(function(a,b) { return a+b; }, 0); return ctx.label + ': ' + fmt(ctx.raw) + ' (' + (ctx.raw/t*100).toFixed(1) + '%)'; } } } } }
-  });
-
-  // Project table
-  var allProjects = [];
-  accountNames.forEach(function(accName) {
-    var acc = data.accounts[accName];
-    Object.keys(acc.projects).filter(function(k) { return k !== '合计'; }).forEach(function(name) {
-      allProjects.push({ name: name, data: acc.projects[name], account: accName });
-    });
-  });
-  allProjects.sort(function(a,b) { return sum(b.data) - sum(a.data); });
-
-  var tbody = document.getElementById('projectTableBody');
-  tbody.innerHTML = '';
-  allProjects.forEach(function(p) {
-    var valid = p.data.filter(function(x) { return x != null; });
-    var s = sum(valid), m = mean(valid), cvVal = cv(valid);
-    var mx = valid.length ? arrMax(valid) : 0;
-    var mn = valid.length ? arrMin(valid) : 0;
-    var level, badgeClass;
-    if (s > 500000) { level = '高消耗'; badgeClass = 'badge-high'; }
-    else if (s > 50000) { level = '中消耗'; badgeClass = 'badge-mid'; }
-    else { level = '低消耗'; badgeClass = 'badge-low'; }
-    var trendText = '-';
-    if (valid.length >= 7) {
-      var ratio = mean(valid.slice(-7)) / mean(valid.slice(0, 7));
-      if (ratio > 1.15) trendText = '上升';
-      else if (ratio < 0.85) trendText = '下降';
-      else trendText = '平稳';
-    } else if (valid.length > 0) { trendText = '数据不足'; }
-    var row = document.createElement('tr');
-    row.innerHTML = '<td class="pl4"><strong>' + p.name + '</strong></td><td>' + p.account + '</td><td class="num">' + fmt(s) + '</td><td class="num">' + fmt(m) + '</td><td class="num">' + fmt(mx) + '</td><td class="num">' + (mn > 0 ? fmt(mn) : '-') + '</td><td class="num">' + (cvVal > 0 ? cvVal.toFixed(1) + '%' : '-') + '</td><td><span class="badge ' + badgeClass + '">' + level + '</span></td><td class="pr4">' + trendText + '</td>';
-    tbody.appendChild(row);
-  });
-
-  // Compare chart
-  var topProjects = sortedProjects.slice(0, 4);
-  destroyChart('compare');
-  chartInstances['compare'] = new Chart(document.getElementById('chartCompare'), {
-    type: 'line',
-    data: { labels: dates, datasets: topProjects.map(function(p, i) { return { label: p[0], data: projects[p[0]], borderColor: CHART_COLORS[i], backgroundColor: 'transparent', tension: 0.3, pointRadius: 1.5, pointHoverRadius: 4, borderWidth: 1.5 }; }) },
-    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'top', align: 'end', labels: { usePointStyle: true, pointStyle: 'circle', padding: 14 } } }, scales: { x: { grid: { display: false }, ticks: { font: { size: 10 } } }, y: { ticks: { callback: function(v) { return fmtShort(v); } }, grid: { color: CANVAS_SOFT } } } }
-  });
-
-  // Account comparison
-  var accountGrid = document.getElementById('accountGrid');
-  accountGrid.innerHTML = '';
-  accountNames.forEach(function(accName, idx) {
-    var acc = data.accounts[accName];
-    var accTotal = acc.projects['合计'] || [];
-    var cardId = 'accChart' + idx;
-    var div = document.createElement('div');
-    div.className = 'card';
-    div.innerHTML = '<div class="card-head"><div class="card-title">' + accName + '</div></div><div class="chart-wrap medium"><canvas id="' + cardId + '"></canvas></div><div class="stat-row" id="accStats' + idx + '"></div>';
-    accountGrid.appendChild(div);
-
-    destroyChart(cardId);
-    chartInstances[cardId] = new Chart(document.getElementById(cardId), {
-      type: 'bar',
-      data: { labels: acc.dates, datasets: [{ data: accTotal, backgroundColor: CHART_COLORS_ALPHA[idx] || 'rgba(83,58,253,0.50)', borderRadius: 2, borderSkipped: false }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { font: { size: 9 } } }, y: { ticks: { callback: function(v) { return fmtShort(v); } }, grid: { color: CANVAS_SOFT } } } }
-    });
-    var projCount = Object.keys(acc.projects).filter(function(k) { return k !== '合计'; }).length;
-    document.getElementById('accStats' + idx).innerHTML = '<span class="stat-chip">累计 ' + fmt(sum(accTotal)) + '</span><span class="stat-chip">日均 ' + fmt(mean(accTotal)) + '</span><span class="stat-chip">' + projCount + ' 个项目</span>';
-  });
-
-  // Weekday chart
-  var weekdayNames = ['周日','周一','周二','周三','周四','周五','周六'];
-  var weekdayData = [0,0,0,0,0,0,0], weekdayCount = [0,0,0,0,0,0,0];
-  dates.forEach(function(d, i) {
-    var parts = d.split('/');
-    var day = new Date(2025, parseInt(parts[0]) - 1, parseInt(parts[1])).getDay();
-    if (szTotal[i] !== null) { weekdayData[day] += szTotal[i]; weekdayCount[day]++; }
-  });
-  var weekdayAvg = weekdayData.map(function(s, i) { return weekdayCount[i] ? s / weekdayCount[i] : 0; });
-
-  destroyChart('weekday');
-  chartInstances['weekday'] = new Chart(document.getElementById('chartWeekday'), {
-    type: 'bar',
-    data: { labels: weekdayNames, datasets: [{ data: weekdayAvg, backgroundColor: weekdayAvg.map(function(_, i) { return i === 0 || i === 6 ? 'rgba(230,168,23,0.45)' : 'rgba(83,58,253,0.50)'; }), borderRadius: 2, borderSkipped: false }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return fmtShort(v); } }, grid: { color: CANVAS_SOFT } } } }
-  });
-
-  // Period chart
-  var totalLen = szTotal.length;
-  var third = Math.floor(totalLen / 3);
-  var periodData = [mean(szTotal.slice(0, third)), mean(szTotal.slice(third, third*2)), mean(szTotal.slice(third*2))];
-
-  destroyChart('period');
-  chartInstances['period'] = new Chart(document.getElementById('chartPeriod'), {
-    type: 'bar',
-    data: { labels: ['前段', '中段', '后段'], datasets: [{ data: periodData, backgroundColor: ['rgba(83,58,253,0.50)', 'rgba(83,58,253,0.35)', 'rgba(83,58,253,0.20)'], borderRadius: 2, borderSkipped: false }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { ticks: { callback: function(v) { return fmtShort(v); } }, grid: { color: CANVAS_SOFT } } } }
-  });
-
-  // Descriptive stats
-  var validTotal = szTotal.filter(function(x) { return x !== null; });
-  var top3 = sortedProjects.slice(0, 3);
-  var statsHtml = '<table class="data-table"><tr><th>统计量</th><th class="num">总消耗</th>';
-  top3.forEach(function(p) { statsHtml += '<th class="num">' + p[0] + '</th>'; });
-  statsHtml += '</tr>';
-  ['样本量','均值','中位数','标准差','变异系数','最大值','最小值'].forEach(function(label) {
-    statsHtml += '<tr><td>' + label + '</td><td class="num">';
-    if (label === '样本量') { statsHtml += validTotal.length; top3.forEach(function(p) { statsHtml += '</td><td class="num">' + projects[p[0]].filter(function(x){return x!==null;}).length; }); }
-    else if (label === '均值') { statsHtml += fmt(mean(validTotal)); top3.forEach(function(p) { statsHtml += '</td><td class="num">' + fmt(mean(projects[p[0]])); }); }
-    else if (label === '中位数') { statsHtml += fmt(median(validTotal)); top3.forEach(function(p) { statsHtml += '</td><td class="num">' + fmt(median(projects[p[0]])); }); }
-    else if (label === '标准差') { statsHtml += fmt(std(validTotal)); top3.forEach(function(p) { statsHtml += '</td><td class="num">' + fmt(std(projects[p[0]])); }); }
-    else if (label === '变异系数') { statsHtml += cv(validTotal).toFixed(1) + '%'; top3.forEach(function(p) { statsHtml += '</td><td class="num">' + cv(projects[p[0]]).toFixed(1) + '%'; }); }
-    else if (label === '最大值') { statsHtml += fmt(arrMax(validTotal)); top3.forEach(function(p) { statsHtml += '</td><td class="num">' + fmt(arrMax(projects[p[0]].filter(function(x){return x!==null;}))); }); }
-    else if (label === '最小值') { statsHtml += fmt(arrMin(validTotal)); top3.forEach(function(p) { statsHtml += '</td><td class="num">' + fmt(arrMin(projects[p[0]].filter(function(x){return x!==null && x>0;}))); }); }
-    statsHtml += '</td></tr>';
-  });
-  statsHtml += '</table>';
-  document.getElementById('descStats').innerHTML = statsHtml;
-
-  // Trend analysis
-  var trendRows = allProjects.map(function(p) {
-    var valid = p.data.filter(function(x) { return x !== null; });
-    if (valid.length < 7) return '<tr><td>' + p.name + '</td><td class="num">' + valid.length + '</td><td>-</td><td>数据不足</td></tr>';
-    var ratio = mean(valid.slice(-7)) / mean(valid.slice(0, 7));
-    var dir, dirStyle;
-    if (ratio > 1.15) { dir = '上升 (' + (ratio*100).toFixed(0) + '%)'; dirStyle = 'color:#0ca678'; }
-    else if (ratio < 0.85) { dir = '下降 (' + (ratio*100).toFixed(0) + '%)'; dirStyle = 'color:#e03131'; }
-    else { dir = '平稳 (' + (ratio*100).toFixed(0) + '%)'; dirStyle = 'color:#64748d'; }
-    var anomalies = valid.filter(function(x) { return Math.abs(x - mean(valid)) > 2 * std(valid); }).length;
-    return '<tr><td>' + p.name + '</td><td class="num">' + valid.length + '</td><td style="' + dirStyle + '">' + dir + '</td><td class="num">' + anomalies + ' 个</td></tr>';
-  }).join('');
-  document.getElementById('trendAnalysis').innerHTML = '<table class="data-table"><thead><tr><th>项目</th><th class="num">有效天数</th><th>趋势判定</th><th class="num">异常点数</th></tr></thead><tbody>' + trendRows + '</tbody></table>';
+function fmt(n) {
+  if (n == null || isNaN(n)) return '-';
+  return Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Tabs
-document.querySelectorAll('.tab-btn').forEach(function(tab) {
-  tab.addEventListener('click', function() {
-    document.querySelectorAll('.tab-btn').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.tab-pane').forEach(function(c) { c.classList.remove('active'); });
-    tab.classList.add('active');
-    document.getElementById(tab.dataset.tab).classList.add('active');
+function fmtPct(n) {
+  if (n == null || isNaN(n)) return '-';
+  return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+}
+
+function fmtCompact(n) {
+  if (n == null || isNaN(n)) return '-';
+  if (Math.abs(n) >= 10000) return (n / 10000).toFixed(2) + '万';
+  return fmt(n);
+}
+
+function renderDashboard(data) {
+  const accounts = data.accounts || {};
+  const genTime = new Date(data.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+  // Collect all data
+  const allDates = new Set();
+  const accountTotals = {};
+  const accountDetails = {};
+  const projectList = [];
+
+  Object.entries(accounts).forEach(([accName, acc]) => {
+    const dates = acc.dates || [];
+    const projects = acc.projects || {};
+    dates.forEach(d => allDates.add(d));
+
+    // Calculate account total (using 合计 row if available, otherwise sum)
+    let accTotal = 0;
+    let activeDays = 0;
+    const dailyTotals = {};
+
+    Object.entries(projects).forEach(([projName, values]) => {
+      if (projName === '合计' || projName === '空') return;
+      let projTotal = 0;
+      let projDays = 0;
+      let projMax = 0;
+      let projMin = Infinity;
+
+      values.forEach((v, i) => {
+        const dayTotal = dailyTotals[dates[i]] || 0;
+        if (v != null && v > 0) {
+          dailyTotals[dates[i]] = dayTotal + v;
+          projTotal += v;
+          projDays++;
+          if (v > projMax) projMax = v;
+          if (v < projMin) projMin = v;
+        }
+      });
+
+      if (projTotal > 0) {
+        projectList.push({
+          name: projName,
+          account: accName,
+          total: projTotal,
+          days: projDays,
+          daily: projDays > 0 ? projTotal / projDays : 0,
+          max: projMax,
+          min: projMin === Infinity ? 0 : projMin
+        });
+      }
+    });
+
+    // Use 合计 if available, otherwise sum daily totals
+    const heji = projects['合计'];
+    if (heji) {
+      accTotal = heji.reduce((s, v) => s + (v || 0), 0);
+      activeDays = heji.filter(v => v != null && v > 0).length;
+    } else {
+      accTotal = Object.values(dailyTotals).reduce((s, v) => s + v, 0);
+      activeDays = Object.values(dailyTotals).filter(v => v > 0).length;
+    }
+
+    accountTotals[accName] = accTotal;
+    accountDetails[accName] = {
+      total: accTotal,
+      activeDays,
+      dates,
+      heji: heji || dates.map(d => dailyTotals[d] || 0),
+      projectCount: Object.keys(projects).filter(k => k !== '合计' && k !== '空').length
+    };
   });
-});
+
+  const sortedDates = [...allDates].sort((a, b) => {
+    const [am, ad] = a.split('/').map(Number);
+    const [bm, bd] = b.split('/').map(Number);
+    return am - bm || ad - bd;
+  });
+
+  const grandTotal = Object.values(accountTotals).reduce((s, v) => s + v, 0);
+  const activeProjectCount = projectList.length;
+  const activeDateCount = sortedDates.filter(d => {
+    return Object.values(accountDetails).some(acc => {
+      const idx = acc.dates.indexOf(d);
+      return idx >= 0 && acc.heji[idx] != null && acc.heji[idx] > 0;
+    });
+  }).length;
+
+  // Calculate daily totals
+  const dailyData = sortedDates.map(d => {
+    let total = 0;
+    const byAccount = {};
+    Object.entries(accountDetails).forEach(([name, acc]) => {
+      const idx = acc.dates.indexOf(d);
+      const val = idx >= 0 ? (acc.heji[idx] || 0) : 0;
+      byAccount[name] = val;
+      total += val;
+    });
+    return { date: d, total, ...byAccount };
+  });
+
+  // Growth rate (last active day vs previous)
+  const activeDays = dailyData.filter(d => d.total > 0);
+  let growthRate = null;
+  if (activeDays.length >= 2) {
+    const last = activeDays[activeDays.length - 1];
+    const prev = activeDays[activeDays.length - 2];
+    if (prev.total > 0) {
+      growthRate = (last.total - prev.total) / prev.total * 100;
+    }
+  }
+
+  // ===== Render Header =====
+  document.getElementById('dataRange').textContent = `数据区间 ${sortedDates[0] || '-'} ~ ${sortedDates[sortedDates.length - 1] || '-'}`;
+  document.getElementById('genTime').textContent = `更新时间 ${genTime}`;
+
+  // ===== Render Stat Row =====
+  document.getElementById('statTotal').textContent = fmtCompact(grandTotal);
+  const avgDaily = activeDateCount > 0 ? grandTotal / activeDateCount : 0;
+  document.getElementById('statDaily').textContent = fmtCompact(avgDaily);
+  document.getElementById('statProjects').textContent = activeProjectCount;
+
+  const projChangeEl = document.getElementById('statProjectsChange');
+  projChangeEl.textContent = `${activeProjectCount} 个有数据`;
+  projChangeEl.className = 'stat-change neutral';
+
+  const growthEl = document.getElementById('statGrowth');
+  const growthChangeEl = document.getElementById('statGrowthChange');
+  if (growthRate != null) {
+    growthEl.textContent = fmtPct(growthRate);
+    growthEl.style.color = growthRate >= 0 ? GREEN_UP : RED_DOWN;
+    if (activeDays.length >= 2) {
+      growthChangeEl.textContent = `${fmtCompact(activeDays[activeDays.length - 1].total)} vs ${fmtCompact(activeDays[activeDays.length - 2].total)}`;
+    }
+    growthChangeEl.className = 'stat-change ' + (growthRate >= 0 ? 'up' : 'down');
+  } else {
+    growthEl.textContent = '-';
+    growthChangeEl.textContent = '数据不足';
+    growthChangeEl.className = 'stat-change neutral';
+  }
+
+  // Total change
+  const totalChangeEl = document.getElementById('statTotalChange');
+  totalChangeEl.textContent = `${activeDateCount} 天有效数据`;
+  totalChangeEl.className = 'stat-change up';
+
+  const dailyChangeEl = document.getElementById('statDailyChange');
+  dailyChangeEl.textContent = `${activeProjectCount} 个项目汇总`;
+  dailyChangeEl.className = 'stat-change neutral';
+
+  // ===== Section 01: Trend Chart =====
+  document.getElementById('trendBadge').textContent = `${sortedDates.length} 天`;
+  document.getElementById('trendSummary').textContent = `7日均线 · 95% CI`;
+
+  const ctxTrend = document.getElementById('chartTrend').getContext('2d');
+  if (chartTrend) chartTrend.destroy();
+
+  const validData = dailyData.filter(d => d.total > 0);
+  const trendLabels = dailyData.map(d => d.date);
+  const trendValues = dailyData.map(d => d.total);
+
+  // 7-day moving average
+  const ma7 = trendValues.map((_, i) => {
+    const start = Math.max(0, i - 6);
+    const slice = trendValues.slice(start, i + 1).filter(v => v > 0);
+    return slice.length > 0 ? slice.reduce((s, v) => s + v, 0) / slice.length : 0;
+  });
+
+  chartTrend = new Chart(ctxTrend, {
+    type: 'line',
+    data: {
+      labels: trendLabels,
+      datasets: [
+        {
+          label: '每日总消耗',
+          data: trendValues,
+          borderColor: PRIMARY,
+          backgroundColor: 'rgba(43,174,133,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 4,
+          pointBackgroundColor: PRIMARY,
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2
+        },
+        {
+          label: '7日均线',
+          data: ma7,
+          borderColor: BLUE_INFO,
+          borderDash: [5, 5],
+          fill: false,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 1.5
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { font: { size: 12 }, color: TEXT_MUTED, usePointStyle: true }
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.dataset.label + ': ' + fmt(ctx.parsed.y)
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: BG_MUTED },
+          ticks: { color: TEXT_LABEL, font: { size: 11 } }
+        },
+        y: {
+          grid: { color: BG_MUTED },
+          ticks: {
+            color: TEXT_LABEL,
+            font: { size: 11 },
+            callback: v => fmtCompact(v)
+          }
+        }
+      }
+    }
+  });
+
+  // Pie chart - project distribution
+  const topProjects = [...projectList].sort((a, b) => b.total - a.total).slice(0, 8);
+  document.getElementById('pieSummary').textContent = `Top ${topProjects.length}`;
+
+  const ctxPie = document.getElementById('chartPie').getContext('2d');
+  if (chartPie) chartPie.destroy();
+
+  chartPie = new Chart(ctxPie, {
+    type: 'doughnut',
+    data: {
+      labels: topProjects.map(p => p.name),
+      datasets: [{
+        data: topProjects.map(p => p.total),
+        backgroundColor: CHART_COLORS,
+        borderWidth: 2,
+        borderColor: '#fff'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { font: { size: 11 }, color: TEXT_MUTED, usePointStyle: true, padding: 8 }
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.label + ': ' + fmt(ctx.parsed)
+          }
+        }
+      },
+      cutout: '60%'
+    }
+  });
+
+  // ===== Section 02: Project Table =====
+  document.getElementById('projectCount').textContent = `${projectList.length} 个项目`;
+  const tbody = document.getElementById('projectTableBody');
+  const sortedProjects = [...projectList].sort((a, b) => b.total - a.total);
+  const maxTotal = sortedProjects[0]?.total || 1;
+
+  tbody.innerHTML = sortedProjects.map(p => {
+    const pct = (p.total / grandTotal * 100).toFixed(1);
+    const barWidth = (p.total / maxTotal * 100).toFixed(0);
+    let badgeClass = 'badge-green';
+    let badgeText = '正常';
+    if (p.total < 100) { badgeClass = 'badge-gray'; badgeText = '微量'; }
+    else if (p.total < 1000) { badgeClass = 'badge-amber'; badgeText = '低量'; }
+    return `<tr>
+      <td><strong>${p.name}</strong></td>
+      <td>${p.account}</td>
+      <td class="num">${fmt(p.total)}</td>
+      <td class="num">${fmt(p.daily)}</td>
+      <td class="num">${fmt(p.max)}</td>
+      <td>
+        <div class="progress-wrap">
+          <div class="progress-bar"><div class="progress-fill" style="width:${barWidth}%"></div></div>
+          <span class="progress-label">${pct}%</span>
+        </div>
+      </td>
+      <td><span class="badge ${badgeClass}">${badgeText}</span></td>
+    </tr>`;
+  }).join('');
+
+  // ===== Section 03: Account Cards =====
+  const accContainer = document.getElementById('accountCards');
+  accContainer.innerHTML = Object.entries(accountDetails).map(([name, acc]) => {
+    return `<div class="account-card">
+      <div class="acc-name">${name} <span class="badge badge-blue">${acc.projectCount} 项目</span></div>
+      <div class="acc-total">${fmtCompact(acc.total)}</div>
+      <div class="acc-detail">
+        <div class="acc-row"><span class="acc-label">活跃天数</span><span class="acc-val">${acc.activeDays} 天</span></div>
+        <div class="acc-row"><span class="acc-label">日均消耗</span><span class="acc-val">${fmtCompact(acc.activeDays > 0 ? acc.total / acc.activeDays : 0)}</span></div>
+        <div class="acc-row"><span class="acc-label">数据天数</span><span class="acc-val">${acc.dates.length} 天</span></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // ===== Section 04: Data Quality =====
+  document.getElementById('qualityPeriod').textContent = `${sortedDates[0] || '-'} ~ ${sortedDates[sortedDates.length - 1] || '-'}`;
+  document.getElementById('qualityDays').textContent = `${sortedDates.length} 天`;
+
+  // Quality score: active days / total days
+  const qualityPct = sortedDates.length > 0 ? (activeDateCount / sortedDates.length * 100).toFixed(0) : 0;
+  const qualityEl = document.getElementById('qualityScore');
+  qualityEl.textContent = qualityPct + '%';
+  if (qualityPct >= 80) qualityEl.className = 'mini-value green';
+  else if (qualityPct >= 50) qualityEl.className = 'mini-value amber';
+  else qualityEl.className = 'mini-value red';
+
+  // Descriptive statistics → 大白话版
+  const validTotals = dailyData.filter(d => d.total > 0).map(d => d.total);
+  if (validTotals.length > 0) {
+    const mean = validTotals.reduce((s, v) => s + v, 0) / validTotals.length;
+    const sorted = [...validTotals].sort((a, b) => a - b);
+    const median = sorted.length % 2 === 0
+      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+      : sorted[Math.floor(sorted.length / 2)];
+    const variance = validTotals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / validTotals.length;
+    const std = Math.sqrt(variance);
+    const n = validTotals.length;
+    const ciMargin = n > 1 ? 1.96 * std / Math.sqrt(n) : 0;
+    const dayMax = Math.max(...validTotals);
+    const dayMin = Math.min(...validTotals);
+    const cv = mean > 0 ? std / mean : 0; // 变异系数
+
+    // 每天平均花多少
+    document.getElementById('statsMean').textContent = fmtCompact(mean);
+
+    // 典型一天花多少
+    document.getElementById('statsMedian').textContent = fmtCompact(median);
+
+    // 花钱稳不稳定 — 用变异系数判断
+    const volEl = document.getElementById('statsVolatility');
+    if (cv < 0.2) {
+      volEl.innerHTML = '很稳定 <span class="badge badge-green">波动小</span>';
+    } else if (cv < 0.5) {
+      volEl.innerHTML = '有起伏 <span class="badge badge-amber">适中</span>';
+    } else {
+      volEl.innerHTML = '波动大 <span class="badge badge-red">不稳定</span>';
+    }
+
+    // 正常花销范围 — 95% CI 用大白话展示
+    document.getElementById('statsRange').textContent = `${fmtCompact(mean - ciMargin)} ~ ${fmtCompact(mean + ciMargin)}`;
+
+    // 最多/最少一天
+    document.getElementById('statsMax').textContent = fmtCompact(dayMax);
+    document.getElementById('statsMin').textContent = fmtCompact(dayMin);
+  }
+
+  // ===== Section 05: Daily Table =====
+  document.getElementById('dailyBadge').textContent = `${dailyData.length} 天`;
+  document.getElementById('dailySummary').textContent = `${dailyData.filter(d => d.total > 0).length} 天有效`;
+
+  const dailyBody = document.getElementById('dailyTableBody');
+  dailyBody.innerHTML = dailyData.map((d, i) => {
+    const prev = i > 0 ? dailyData[i - 1] : null;
+    let growthBadge = '<span class="badge badge-gray">-</span>';
+    if (prev && prev.total > 0 && d.total > 0) {
+      const g = (d.total - prev.total) / prev.total * 100;
+      if (g > 5) growthBadge = `<span class="badge badge-green">+${g.toFixed(1)}%</span>`;
+      else if (g < -5) growthBadge = `<span class="badge badge-red">${g.toFixed(1)}%</span>`;
+      else growthBadge = `<span class="badge badge-blue">${g >= 0 ? '+' : ''}${g.toFixed(1)}%</span>`;
+    } else if (d.total > 0 && (!prev || prev.total === 0)) {
+      growthBadge = '<span class="badge badge-amber">新增</span>';
+    }
+
+    const sz = d['深圳帐号'] || 0;
+    const gz = d['贵州'] || 0;
+    const aly = d['阿里云'] || 0;
+    const rowClass = d.total > 0 ? '' : 'style="color:var(--text-label)"';
+
+    return `<tr ${rowClass}>
+      <td>${d.date}</td>
+      <td class="num">${sz > 0 ? fmt(sz) : '-'}</td>
+      <td class="num">${gz > 0 ? fmt(gz) : '-'}</td>
+      <td class="num">${aly > 0 ? fmt(aly) : '-'}</td>
+      <td class="num"><strong>${d.total > 0 ? fmt(d.total) : '-'}</strong></td>
+      <td>${growthBadge}</td>
+    </tr>`;
+  }).join('');
+
+  // ===== Footer =====
+  document.getElementById('footerRefresh').textContent = `自动刷新 · ${genTime}`;
+
+  // ===== Section 05: Month-over-Month =====
+  renderMonthComparison(data);
+
+  // ===== Section 06: Concentration & Weekly =====
+  renderConcentration(projectList, grandTotal);
+  renderWeeklyPattern(dailyData);
+}
+
+// ============ 月度对比 ============
+function renderMonthComparison(data) {
+  const months = data.months;
+  if (!months) return;
+
+  const juneAcc = months.june?.accounts?.['深圳帐号'];
+  const julyAcc = months.july?.accounts?.['深圳帐号'];
+  if (!juneAcc && !julyAcc) return;
+
+  // 6月统计
+  let juneTotal = 0, juneDays = 0, juneProjectSet = new Set();
+  const juneProjectTotals = {};
+  if (juneAcc) {
+    const heji = juneAcc.projects['合计'] || [];
+    heji.forEach(v => { if (v != null && v > 0) { juneTotal += v; juneDays++; } });
+    Object.entries(juneAcc.projects).forEach(([name, vals]) => {
+      if (name === '合计' || name === '空') return;
+      const t = vals.reduce((s, v) => s + (v || 0), 0);
+      if (t > 0) { juneProjectTotals[name] = t; juneProjectSet.add(name); }
+    });
+  }
+
+  // 7月统计
+  let julyTotal = 0, julyDays = 0, julyProjectSet = new Set();
+  const julyProjectTotals = {};
+  if (julyAcc) {
+    const heji = julyAcc.projects['合计'] || [];
+    heji.forEach(v => { if (v != null && v > 0) { julyTotal += v; julyDays++; } });
+    Object.entries(julyAcc.projects).forEach(([name, vals]) => {
+      if (name === '合计' || name === '空') return;
+      const t = vals.reduce((s, v) => s + (v || 0), 0);
+      if (t > 0) { julyProjectTotals[name] = t; julyProjectSet.add(name); }
+    });
+  }
+
+  // 渲染 4 张对比卡
+  document.getElementById('momJuneTotal').textContent = fmtCompact(juneTotal);
+  document.getElementById('momJuneDays').textContent = `${juneDays} 天有效数据`;
+  document.getElementById('momJulyTotal').textContent = fmtCompact(julyTotal);
+  document.getElementById('momJulyDays').textContent = `${julyDays} 天有效数据`;
+
+  // 日均对比
+  const juneDaily = juneDays > 0 ? juneTotal / juneDays : 0;
+  const julyDaily = julyDays > 0 ? julyTotal / julyDays : 0;
+  const dailyDiff = juneDaily > 0 ? ((julyDaily - juneDaily) / juneDaily * 100) : 0;
+  document.getElementById('momDailyChange').textContent = fmtPct(dailyDiff);
+  document.getElementById('momDailyChange').style.color = dailyDiff >= 0 ? GREEN_UP : RED_DOWN;
+  const dailyBadgeEl = document.getElementById('momDailyBadge');
+  dailyBadgeEl.textContent = `6月日均 ${fmtCompact(juneDaily)} → 7月日均 ${fmtCompact(julyDaily)}`;
+  dailyBadgeEl.className = 'stat-change ' + (dailyDiff >= 0 ? 'up' : 'down');
+
+  // 项目变化
+  const newProjects = [...julyProjectSet].filter(p => !juneProjectSet.has(p));
+  const removedProjects = [...juneProjectSet].filter(p => !julyProjectSet.has(p));
+  const netChange = julyProjectSet.size - juneProjectSet.size;
+  document.getElementById('momProjectChange').textContent = (netChange >= 0 ? '+' : '') + netChange;
+  document.getElementById('momProjectChange').style.color = netChange >= 0 ? GREEN_UP : RED_DOWN;
+  let projDetail = `${juneProjectSet.size} → ${julyProjectSet.size} 个`;
+  if (newProjects.length > 0) projDetail += ` · 新增 ${newProjects.length}`;
+  if (removedProjects.length > 0) projDetail += ` · 减少 ${removedProjects.length}`;
+  document.getElementById('momProjectDetail').textContent = projDetail;
+
+  // 双月走势对比图 — 按日对齐
+  const maxDays = Math.max(
+    juneAcc?.dates?.length || 0,
+    julyAcc?.dates?.length || 0
+  );
+  const dayLabels = Array.from({ length: maxDays }, (_, i) => '第' + (i + 1) + '天');
+  const juneHeji = juneAcc?.projects['合计'] || [];
+  const julyHeji = julyAcc?.projects['合计'] || [];
+  const juneSeries = Array.from({ length: maxDays }, (_, i) => juneHeji[i] || 0);
+  const julySeries = Array.from({ length: maxDays }, (_, i) => julyHeji[i] || 0);
+
+  const ctxMC = document.getElementById('chartMonthCompare').getContext('2d');
+  if (chartMonthCompare) chartMonthCompare.destroy();
+  chartMonthCompare = new Chart(ctxMC, {
+    type: 'line',
+    data: {
+      labels: dayLabels,
+      datasets: [
+        { label: '6月', data: juneSeries, borderColor: BLUE_INFO, backgroundColor: 'rgba(59,130,246,0.1)', fill: false, tension: 0.3, pointRadius: 3, pointBackgroundColor: BLUE_INFO },
+        { label: '7月', data: julySeries, borderColor: PRIMARY, backgroundColor: 'rgba(43,174,133,0.1)', fill: false, tension: 0.3, pointRadius: 3, pointBackgroundColor: PRIMARY }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 12 }, color: TEXT_MUTED, usePointStyle: true } },
+        tooltip: { callbacks: { label: ctx => ctx.dataset.label + ' 第' + (ctx.dataIndex + 1) + '天: ' + fmt(ctx.parsed.y) } }
+      },
+      scales: {
+        x: { grid: { color: BG_MUTED }, ticks: { color: TEXT_LABEL, font: { size: 11 } } },
+        y: { grid: { color: BG_MUTED }, ticks: { color: TEXT_LABEL, font: { size: 11 }, callback: v => fmtCompact(v) } }
+      }
+    }
+  });
+
+  // 项目排名变化表
+  const allProjNames = new Set([...Object.keys(juneProjectTotals), ...Object.keys(julyProjectTotals)]);
+  const rankData = [...allProjNames].map(name => ({
+    name,
+    june: juneProjectTotals[name] || 0,
+    july: julyProjectTotals[name] || 0
+  }));
+  // 计算排名
+  const juneRanked = [...rankData].filter(p => p.june > 0).sort((a, b) => b.june - a.june);
+  const julyRanked = [...rankData].filter(p => p.july > 0).sort((a, b) => b.july - a.july);
+  const juneRank = {};
+  juneRanked.forEach((p, i) => juneRank[p.name] = i + 1);
+  const julyRank = {};
+  julyRanked.forEach((p, i) => julyRank[p.name] = i + 1);
+
+  // 按七月消耗排序
+  const sortedRank = rankData.sort((a, b) => (b.july || 0) - (a.july || 0));
+  const rankBody = document.getElementById('rankTableBody');
+  rankBody.innerHTML = sortedRank.map(p => {
+    const jRank = juneRank[p.name];
+    const julyR = julyRank[p.name];
+    let changeBadge = '<span class="badge badge-gray">新增</span>';
+    if (jRank && julyR) {
+      const diff = jRank - julyR; // 正数=上升
+      if (diff > 0) changeBadge = `<span class="badge badge-green">↑ 上升 ${diff} 位</span>`;
+      else if (diff < 0) changeBadge = `<span class="badge badge-red">↓ 下降 ${-diff} 位</span>`;
+      else changeBadge = '<span class="badge badge-blue">— 持平</span>';
+    } else if (!jRank && !julyR) {
+      changeBadge = '<span class="badge badge-gray">无数据</span>';
+    } else if (!jRank) {
+      changeBadge = '<span class="badge badge-amber">7月新增</span>';
+    } else {
+      changeBadge = '<span class="badge badge-gray">7月无消耗</span>';
+    }
+    return `<tr>
+      <td><strong>${p.name}</strong></td>
+      <td class="num">${p.june > 0 ? fmt(p.june) : '-'}</td>
+      <td class="num">${p.july > 0 ? fmt(p.july) : '-'}</td>
+      <td class="num">${jRank || '-'}</td>
+      <td class="num">${julyR || '-'}</td>
+      <td>${changeBadge}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ============ 消耗集中度 ============
+function renderConcentration(projectList, grandTotal) {
+  const container = document.getElementById('concentrationPanel');
+  if (!container || projectList.length === 0) return;
+
+  const sorted = [...projectList].sort((a, b) => b.total - a.total);
+  const maxVal = sorted[0].total;
+  const totalProjects = sorted.length;
+
+  // 计算 Top 3 占比
+  const top3Total = sorted.slice(0, 3).reduce((s, p) => s + p.total, 0);
+  const top3Pct = grandTotal > 0 ? (top3Total / grandTotal * 100).toFixed(1) : 0;
+
+  // 集中度判断
+  let concLevel = '分散', concColor = 'badge-green', concDesc = '消耗分布均匀，没有过度依赖单一项目';
+  if (top3Pct >= 90) { concLevel = '高度集中'; concColor = 'badge-red'; concDesc = '消耗极度集中在前3个项目，风险较高'; }
+  else if (top3Pct >= 75) { concLevel = '较集中'; concColor = 'badge-amber'; concDesc = '消耗主要集中在前3个项目，需关注依赖风险'; }
+
+  const rankColors = [PRIMARY, BLUE_INFO, AMBER, '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#10b981', '#ef4444'];
+
+  let html = sorted.slice(0, 10).map((p, i) => {
+    const pct = grandTotal > 0 ? (p.total / grandTotal * 100) : 0;
+    const barWidth = (p.total / maxVal * 100);
+    const color = rankColors[i % rankColors.length];
+    return `<div class="conc-item">
+      <div class="conc-rank" style="background:${color}">${i + 1}</div>
+      <div class="conc-info">
+        <div class="conc-name">${p.name} <span style="color:var(--text-label);font-size:11px">${p.account}</span></div>
+        <div class="conc-bar"><div class="conc-fill" style="width:${barWidth}%;background:${color}"></div></div>
+      </div>
+      <div class="conc-amount">${fmtCompact(p.total)}<br><span style="font-size:11px;color:var(--text-label)">${pct.toFixed(1)}%</span></div>
+    </div>`;
+  }).join('');
+
+  html += `<div class="conc-summary">
+    <strong>集中度判断：</strong><span class="badge ${concColor}">${concLevel}</span><br>
+    前3个项目占总消耗的 <strong>${top3Pct}%</strong>，共 ${totalProjects} 个项目有消耗。<br>
+    ${concDesc}
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+// ============ 周内规律 ============
+function renderWeeklyPattern(dailyData) {
+  // 把日期映射到星期几
+  // 假设 6/1/2026 是星期一, 7/1/2026 是星期三
+  // 2026-06-01 是 Monday (实际计算)
+  const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const weekdayTotals = [0, 0, 0, 0, 0, 0, 0]; // 0=Sunday
+  const weekdayCounts = [0, 0, 0, 0, 0, 0, 0];
+
+  dailyData.forEach(d => {
+    if (d.total <= 0) return;
+    const [month, day] = d.date.split('/').map(Number);
+    // 2026年: 6/1 = 周一, 7/1 = 周三
+    const date = new Date(2026, month - 1, day);
+    const dow = date.getDay();
+    weekdayTotals[dow] += d.total;
+    weekdayCounts[dow]++;
+  });
+
+  // 计算日均
+  const weekdayAvg = weekdayTotals.map((t, i) => weekdayCounts[i] > 0 ? t / weekdayCounts[i] : 0);
+
+  // 找到最高和最低
+  const maxAvg = Math.max(...weekdayAvg.filter(v => v > 0));
+  const minAvg = Math.min(...weekdayAvg.filter(v => v > 0));
+  const maxDay = dayNames[weekdayAvg.indexOf(maxAvg)];
+  const minDay = dayNames[weekdayAvg.indexOf(minAvg)];
+
+  const ctxW = document.getElementById('chartWeekly').getContext('2d');
+  if (chartWeekly) chartWeekly.destroy();
+  chartWeekly = new Chart(ctxW, {
+    type: 'bar',
+    data: {
+      labels: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+      datasets: [{
+        label: '日均消耗',
+        data: [weekdayAvg[1], weekdayAvg[2], weekdayAvg[3], weekdayAvg[4], weekdayAvg[5], weekdayAvg[6], weekdayAvg[0]],
+        backgroundColor: [weekdayAvg[1], weekdayAvg[2], weekdayAvg[3], weekdayAvg[4], weekdayAvg[5], weekdayAvg[6], weekdayAvg[0]].map(v => v === maxAvg ? AMBER : PRIMARY),
+        borderRadius: 6,
+        barThickness: 32
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => '日均: ' + fmt(ctx.parsed.y) } }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: TEXT_MUTED, font: { size: 12 } } },
+        y: { grid: { color: BG_MUTED }, ticks: { color: TEXT_LABEL, font: { size: 11 }, callback: v => fmtCompact(v) } }
+      }
+    }
+  });
+}
