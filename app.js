@@ -34,6 +34,22 @@ function fmtCompact(n) {
   return fmt(n);
 }
 
+function toWan(n) {
+  return (Number(n) || 0) / 10000;
+}
+
+function fmtWan(n) {
+  if (n == null || isNaN(n)) return '-';
+  return Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' 万元';
+}
+
+function formatMonthDay(dateText) {
+  if (!dateText) return '-';
+  const [month, day] = String(dateText).split('/').map(Number);
+  if (!month || !day) return dateText;
+  return `${month}月${day}日`;
+}
+
 function renderDashboard(data) {
   const accounts = data.accounts || {};
   const genTime = new Date(data.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
@@ -184,16 +200,15 @@ function renderDashboard(data) {
 
   // ===== Section 01: Trend Chart =====
   document.getElementById('trendBadge').textContent = `${sortedDates.length} 天`;
-  document.getElementById('trendSummary').textContent = `7日均线 · 95% CI`;
+  document.getElementById('trendSummary').textContent = `单位：万元 · 7日均线`;
 
   const ctxTrend = document.getElementById('chartTrend').getContext('2d');
   if (chartTrend) chartTrend.destroy();
 
-  const validData = dailyData.filter(d => d.total > 0);
-  const trendLabels = dailyData.map(d => d.date);
-  const trendValues = dailyData.map(d => d.total);
+  const trendLabels = dailyData.map(d => formatMonthDay(d.date));
+  const trendValues = dailyData.map(d => toWan(d.total));
 
-  // 7-day moving average
+  // 7-day moving average（万元）
   const ma7 = trendValues.map((_, i) => {
     const start = Math.max(0, i - 6);
     const slice = trendValues.slice(start, i + 1).filter(v => v > 0);
@@ -206,7 +221,7 @@ function renderDashboard(data) {
       labels: trendLabels,
       datasets: [
         {
-          label: '每日总消耗',
+          label: '每日总消耗（万元）',
           data: trendValues,
           borderColor: PRIMARY,
           backgroundColor: 'rgba(43,174,133,0.1)',
@@ -218,7 +233,7 @@ function renderDashboard(data) {
           pointBorderWidth: 2
         },
         {
-          label: '7日均线',
+          label: '7日均线（万元）',
           data: ma7,
           borderColor: BLUE_INFO,
           borderDash: [5, 5],
@@ -240,7 +255,7 @@ function renderDashboard(data) {
         },
         tooltip: {
           callbacks: {
-            label: ctx => ctx.dataset.label + ': ' + fmt(ctx.parsed.y)
+            label: ctx => ctx.dataset.label + ': ' + fmtWan(ctx.parsed.y)
           }
         }
       },
@@ -254,7 +269,7 @@ function renderDashboard(data) {
           ticks: {
             color: TEXT_LABEL,
             font: { size: 11 },
-            callback: v => fmtCompact(v)
+            callback: v => fmtWan(v)
           }
         }
       }
@@ -263,7 +278,7 @@ function renderDashboard(data) {
 
   // Pie chart - project distribution
   const topProjects = [...projectList].sort((a, b) => b.total - a.total).slice(0, 8);
-  document.getElementById('pieSummary').textContent = `Top ${topProjects.length}`;
+  document.getElementById('pieSummary').textContent = `Top ${topProjects.length} · 单位：万元`;
 
   const ctxPie = document.getElementById('chartPie').getContext('2d');
   if (chartPie) chartPie.destroy();
@@ -273,7 +288,7 @@ function renderDashboard(data) {
     data: {
       labels: topProjects.map(p => p.name),
       datasets: [{
-        data: topProjects.map(p => p.total),
+        data: topProjects.map(p => toWan(p.total)),
         backgroundColor: CHART_COLORS,
         borderWidth: 2,
         borderColor: '#fff'
@@ -289,7 +304,7 @@ function renderDashboard(data) {
         },
         tooltip: {
           callbacks: {
-            label: ctx => ctx.label + ': ' + fmt(ctx.parsed)
+            label: ctx => ctx.label + ': ' + fmtWan(ctx.parsed)
           }
         }
       },
