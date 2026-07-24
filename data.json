@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-07-23T12:19:28.131Z",
+  "timestamp": "2026-07-24T04:08:42.392Z",
   "file_id_july": "DSVdETnBOaUp3ekRT",
   "file_id_june": "DYmh3d2pnWmZLbmJL",
   "months": {
@@ -576,7 +576,7 @@
               null,
               null,
               null,
-              null,
+              51.6,
               null,
               null
             ],
@@ -603,7 +603,7 @@
               0,
               0,
               0,
-              0,
+              51.6,
               0,
               0
             ]
@@ -1543,7 +1543,7 @@
           null,
           null,
           null,
-          null,
+          51.6,
           null,
           null
         ],
@@ -1570,7 +1570,7 @@
           0,
           0,
           0,
-          0,
+          51.6,
           0,
           0
         ]
